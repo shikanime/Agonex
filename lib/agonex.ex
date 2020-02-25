@@ -4,38 +4,49 @@ defmodule Agonex do
   alias Agonex.{Duration, Empty, KeyValue}
   alias Agonex.SDK.Stub
 
+  @type conn :: atom | pid | {atom, any} | {:via, atom, any}
+  @type duration :: non_neg_integer
+
   def start_link(url, opts \\ []) do
     Connection.start_link(__MODULE__, {url, opts})
   end
 
+  @spec ready(conn) :: :ok
   def ready(conn) do
     Connection.cast(conn, :ready)
   end
 
+  @spec allocate(conn) :: :ok
   def allocate(conn) do
     Connection.cast(conn, :allocate)
   end
 
+  @spec shutdown(conn) :: :ok
   def shutdown(conn) do
     Connection.cast(conn, :shutdown)
   end
 
+  @spec reserve(conn, duration) :: :ok
   def reserve(conn, seconds) do
     Connection.call(conn, {:reserve, seconds})
   end
 
+  @spec get_game_server(conn) :: {:ok, Agonex.GameServer.t()}
   def get_game_server(conn) do
     Connection.call(conn, :game_server)
   end
 
+  @spec watch_game_server(conn) :: {:ok, Stream.t()} | {:error, GRPC.RPCError.t()}
   def watch_game_server(conn) do
     Connection.call(conn, :watch_game_server)
   end
 
+  @spec set_label(conn, String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
   def set_label(conn, key, value) do
     Connection.call(conn, {:set_label, key, value})
   end
 
+  @spec set_annotation(conn, String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
   def set_annotation(conn, key, value) do
     Connection.call(conn, {:set_annotation, key, value})
   end
