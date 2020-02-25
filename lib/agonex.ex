@@ -87,7 +87,7 @@ defmodule Agonex do
         Logger.error("Connection closed")
     end
 
-    {:connect, :reconnect, %{state | channel: nil}}
+    {:connect, :reconnect, %{state | channel: nil, health: nil}}
   end
 
   def handle_info(:health, _, state) do
