@@ -1,4 +1,8 @@
 defmodule Agonex do
+  @moduledoc """
+  A SDK client for Agones.
+  """
+
   use Connection
   require Logger
   alias Agonex.{Duration, Empty, KeyValue}
