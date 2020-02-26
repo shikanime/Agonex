@@ -14,7 +14,7 @@
 
 syntax = "proto3";
 
-package agonex.sdk.alpha;
+package agones.sdk.alpha;
 option go_package = "alpha";
 
 import "google/api/annotations.proto";
