@@ -5,122 +5,160 @@ defmodule Agonex do
 
   use Connection
   require Logger
-  alias Agonex.{Duration, Empty, KeyValue}
-  alias Agonex.SDK.Stub
+  alias Agonex.{Duration, Empty, KeyValue, SDK, Watcher}
 
   @type conn :: atom | pid | {atom, any} | {:via, atom, any}
   @type duration :: non_neg_integer
 
-  def start_link(url, opts \\ []) do
-    Connection.start_link(__MODULE__, {url, opts})
-  end
+  def start_link(url, opts \\ []),
+    do: Connection.start_link(__MODULE__, {url, opts})
 
   @spec ready(conn) :: :ok
-  def ready(conn) do
-    Connection.cast(conn, :ready)
-  end
+  def ready(conn),
+    do: Connection.cast(conn, :ready)
 
   @spec allocate(conn) :: :ok
-  def allocate(conn) do
-    Connection.cast(conn, :allocate)
-  end
+  def allocate(conn),
+    do: Connection.cast(conn, :allocate)
 
   @spec shutdown(conn) :: :ok
-  def shutdown(conn) do
-    Connection.cast(conn, :shutdown)
-  end
+  def shutdown(conn),
+    do: Connection.cast(conn, :shutdown)
 
   @spec reserve(conn, duration) :: :ok
-  def reserve(conn, seconds) do
-    Connection.call(conn, {:reserve, seconds})
-  end
+  def reserve(conn, seconds),
+    do: Connection.call(conn, {:reserve, seconds})
 
   @spec get_game_server(conn) :: {:ok, Agonex.GameServer.t()}
-  def get_game_server(conn) do
-    Connection.call(conn, :game_server)
-  end
+  def get_game_server(conn),
+    do: Connection.call(conn, :game_server)
 
-  @spec watch_game_server(conn) :: {:ok, Stream.t()} | {:error, GRPC.RPCError.t()}
-  def watch_game_server(conn) do
-    Connection.call(conn, :watch_game_server)
-  end
+  @spec watch_game_server(conn) :: :ok | {:error, GRPC.RPCError.t()}
+  def watch_game_server(conn),
+    do: Connection.call(conn, :watch_game_server)
 
   @spec set_label(conn, String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
-  def set_label(conn, key, value) do
-    Connection.call(conn, {:set_label, key, value})
-  end
+  def set_label(conn, key, value),
+    do: Connection.call(conn, {:set_label, key, value})
 
   @spec set_annotation(conn, String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
-  def set_annotation(conn, key, value) do
-    Connection.call(conn, {:set_annotation, key, value})
-  end
+  def set_annotation(conn, key, value),
+    do: Connection.call(conn, {:set_annotation, key, value})
 
   def init({url, opts}) do
-    health_interval = Keyword.pop(opts, :health_interval, 5000)
-    grpc_opts = Keyword.pop(opts, :grpc_opts, [])
+    health_interval = Keyword.get(opts, :health_interval, 5000)
+    grpc_opts = Keyword.get(opts, :grpc_opts, [])
 
     state = %{
       url: url,
       channel: nil,
-      health: nil,
+      health_stream: nil,
       health_interval: health_interval,
+      watcher_streams: [],
       grpc_opts: grpc_opts
     }
+
+    Process.flag(:trap_exit, true)
 
     {:connect, :init, state}
   end
 
   def connect(_, state) do
-    with {:ok, channel} <- GRPC.Stub.connect(state.url, state.opts),
-         {:ok, stream} <- connect_health(state.channel) do
-      {:ok, %{state | channel: channel, health: stream}}
+    with {:ok, channel} <- GRPC.Stub.connect(state.url, state.grpc_opts),
+         {:ok, health_stream} <- SDK.Stub.health(channel) do
+      state = %{
+        state
+        | channel: channel,
+          health_stream: health_stream
+      }
+
+      Process.send_after(self(), :health, state.health_interval)
+
+      {:ok, state}
     else
-      {:error, _} -> {:backoff, 1000, state}
+      {:error, _} ->
+        {:backoff, 1000, state}
     end
   end
 
-  def disconnect(info, %{channel: channel} = state) do
-    {:ok, _} = GRPC.Stub.disconnect(channel)
-
-    case info do
+  def disconnect(reason, state) do
+    case reason do
       {:error, :closed} ->
         Logger.error("Connection closed")
+
+      _ ->
+        :ok
     end
 
-    {:connect, :reconnect, %{state | channel: nil, health: nil}}
+    Enum.each(state.watcher_streams, &GRPC.Stub.end_stream(elem(&1, 0)))
+    GRPC.Stub.disconnect(state.channel)
+
+    state = %{
+      state
+      | channel: nil,
+        health_stream: nil,
+        watcher_streams: []
+    }
+
+    {:connect, :reconnect, state}
   end
 
-  def handle_info(:health, _, state) do
-    GRPC.Stub.send_request(state.health, Empty.new())
+  def handle_info(:health, state) do
+    GRPC.Stub.send_request(state.health_stream, Empty.new())
     Process.send_after(self(), :health, state.health_interval)
     {:noreply, state}
   end
 
-  def handle_cast(:ready, _, state) do
-    case Stub.ready(state.channel, Empty.new()) do
-      {:ok, _} -> {:noreply, state}
-      {:error, %GRPC.RPCError{}} = error -> {:disconnect, error, error, state}
+  def handle_info({:EXIT, pid, :shutdown}, state) do
+    {:noreply,
+     Map.get_and_update(
+       state,
+       :watcher_streams,
+       &filter_watcher_streams_by_pid(&1, pid)
+     )}
+  end
+
+  defp filter_watcher_streams_by_pid(watcher_streams, pid) do
+    Enum.filter(watcher_streams, &match?({_, ^pid}, &1))
+  end
+
+  def handle_cast(:ready, state) do
+    case SDK.Stub.ready(state.channel, Empty.new()) do
+      {:ok, _} ->
+        {:noreply, state}
+
+      {:error, %GRPC.RPCError{}} = error ->
+        {:disconnect, error, error, state}
     end
   end
 
-  def handle_cast(:allocate, _, state) do
-    case Stub.allocate(state.channel, Empty.new()) do
-      {:ok, _} -> {:noreply, state}
-      {:error, %GRPC.RPCError{}} = error -> {:disconnect, error, error, state}
+  def handle_cast(:allocate, state) do
+    case SDK.Stub.allocate(state.channel, Empty.new()) do
+      {:ok, _} ->
+        {:noreply, state}
+
+      {:error, %GRPC.RPCError{}} = error ->
+        {:disconnect, error, error, state}
     end
   end
 
-  def handle_cast(:shutdown, _, state) do
-    case Stub.shutdown(state.channel, Empty.new()) do
-      {:ok, _} -> {:noreply, state}
-      {:error, %GRPC.RPCError{}} = error -> {:disconnect, error, error, state}
+  def handle_cast(:shutdown, state) do
+    case SDK.Stub.shutdown(state.channel, Empty.new()) do
+      {:ok, _} ->
+        {:noreply, state}
+
+      {:error, %GRPC.RPCError{}} = error ->
+        {:disconnect, error, error, state}
     end
   end
 
-  def handle_cast({:reserve, seconds}, _, state) do
-    case Stub.reserve(state.channel, Duration.new(seconds: seconds)) do
-      {:ok, _} -> {:reply, :ok, state}
-      {:error, %GRPC.RPCError{}} = error -> {:disconnect, error, error, state}
+  def handle_cast({:reserve, seconds}, state) do
+    case SDK.Stub.reserve(state.channel, Duration.new(seconds: seconds)) do
+      {:ok, _} ->
+        {:reply, :ok, state}
+
+      {:error, %GRPC.RPCError{}} = error ->
+        {:reply, error, state}
     end
   end
 
@@ -129,52 +167,48 @@ defmodule Agonex do
   end
 
   def handle_call(:game_server, _, state) do
-    case Stub.get_game_server(state.channel, Empty.new()) do
-      {:ok, game_server} -> {:reply, {:ok, game_server}, state}
-      {:error, %GRPC.RPCError{}} = error -> {:disconnect, error, error, state}
+    case SDK.Stub.get_game_server(state.channel, Empty.new()) do
+      {:ok, game_server} ->
+        {:reply, {:ok, game_server}, state}
+
+      {:error, %GRPC.RPCError{}} = error ->
+        {:reply, error, state}
     end
   end
 
-  def handle_call(:watch_game_server, _, state) do
-    case Stub.watch_game_server(state.channel, Empty.new()) do
+  def handle_call(:watch_game_server, {pid, _}, state) do
+    case SDK.Stub.watch_game_server(state.channel, Empty.new()) do
       {:error, %GRPC.RPCError{}} = error ->
-        {:disconnect, error, error, state}
+        {:reply, error, state}
 
       stream ->
-        {:reply, {:ok, stream |> grpc_to_stream()}, state}
+        case Watcher.start_link(state.channel, pid) do
+          {:ok, _} ->
+            {:reply, :ok, Map.get_and_update(state, :watcher_streams, &[{stream, pid} | &1])}
+
+          {:error, _} = error ->
+            {:reply, error, state}
+        end
     end
   end
 
   def handle_call({:set_label, key, value}, _, state) do
-    case Stub.set_label(state.channel, KeyValue.new(key: key, value: value)) do
-      {:ok, _} -> {:reply, :ok, state}
-      {:error, %GRPC.RPCError{}} = error -> {:disconnect, error, error, state}
+    case SDK.Stub.set_label(state.channel, KeyValue.new(key: key, value: value)) do
+      {:ok, _} ->
+        {:reply, :ok, state}
+
+      {:error, %GRPC.RPCError{}} = error ->
+        {:reply, error, state}
     end
   end
 
   def handle_call({:set_annotation, key, value}, _, state) do
-    case Stub.set_annotation(state.channel, KeyValue.new(key: key, value: value)) do
-      {:ok, _} -> {:reply, :ok, state}
-      {:error, %GRPC.RPCError{}} = error -> {:disconnect, error, error, state}
-    end
-  end
+    case SDK.Stub.set_annotation(state.channel, KeyValue.new(key: key, value: value)) do
+      {:ok, _} ->
+        {:reply, :ok, state}
 
-  defp connect_health(channel) do
-    case Stub.health(channel) do
       {:error, %GRPC.RPCError{}} = error ->
-        error
-
-      stream ->
-        send(self(), :health)
-        {:ok, stream}
+        {:reply, error, state}
     end
-  end
-
-  defp grpc_to_stream(stream) do
-    Stream.resource(
-      fn -> stream end,
-      &GRPC.Stub.recv(&1),
-      &GRPC.Stub.send_request(&1, Empty.new(), end_stream: true)
-    )
   end
 end
