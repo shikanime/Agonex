@@ -13,10 +13,6 @@ defmodule Agonex do
   def start_link(url, opts \\ []),
     do: Connection.start_link(__MODULE__, {url, opts})
 
-  @spec ready(conn) :: :ok
-  def ready(conn),
-    do: Connection.cast(conn, :ready)
-
   @spec allocate(conn) :: :ok
   def allocate(conn),
     do: Connection.cast(conn, :allocate)
@@ -54,7 +50,6 @@ defmodule Agonex do
       channel: nil,
       health_stream: nil,
       health_interval: health_interval,
-      watcher_streams: [],
       grpc_opts: grpc_opts
     }
 
@@ -65,14 +60,15 @@ defmodule Agonex do
 
   def connect(_, state) do
     with {:ok, channel} <- GRPC.Stub.connect(state.url, state.grpc_opts),
-         {:ok, health_stream} <- SDK.Stub.health(channel) do
+         {:ok, health_stream} <- SDK.Stub.health(channel),
+         {:ok, _}<- SDK.Stub.ready(state.channel, Empty.new()) do
       state = %{
         state
         | channel: channel,
           health_stream: health_stream
       }
 
-      Process.send_after(self(), :health, state.health_interval)
+      send(self(), :health)
 
       {:ok, state}
     else
@@ -90,14 +86,12 @@ defmodule Agonex do
         :ok
     end
 
-    Enum.each(state.watcher_streams, &GRPC.Stub.end_stream(elem(&1, 0)))
     GRPC.Stub.disconnect(state.channel)
 
     state = %{
       state
       | channel: nil,
-        health_stream: nil,
-        watcher_streams: []
+        health_stream: nil
     }
 
     {:connect, :reconnect, state}
@@ -107,29 +101,6 @@ defmodule Agonex do
     GRPC.Stub.send_request(state.health_stream, Empty.new())
     Process.send_after(self(), :health, state.health_interval)
     {:noreply, state}
-  end
-
-  def handle_info({:EXIT, pid, :shutdown}, state) do
-    {:noreply,
-     Map.get_and_update(
-       state,
-       :watcher_streams,
-       &filter_watcher_streams_by_pid(&1, pid)
-     )}
-  end
-
-  defp filter_watcher_streams_by_pid(watcher_streams, pid) do
-    Enum.filter(watcher_streams, &match?({_, ^pid}, &1))
-  end
-
-  def handle_cast(:ready, state) do
-    case SDK.Stub.ready(state.channel, Empty.new()) do
-      {:ok, _} ->
-        {:noreply, state}
-
-      {:error, %GRPC.RPCError{}} = error ->
-        {:disconnect, error, error, state}
-    end
   end
 
   def handle_cast(:allocate, state) do
@@ -177,18 +148,12 @@ defmodule Agonex do
   end
 
   def handle_call(:watch_game_server, {pid, _}, state) do
-    case SDK.Stub.watch_game_server(state.channel, Empty.new()) do
-      {:error, %GRPC.RPCError{}} = error ->
+    case Watcher.start_link(state.channel, pid) do
+      {:ok, _} ->
+        {:reply, :ok, state}
+
+      {:error, _} = error ->
         {:reply, error, state}
-
-      stream ->
-        case Watcher.start_link(state.channel, pid) do
-          {:ok, _} ->
-            {:reply, :ok, Map.get_and_update(state, :watcher_streams, &[{stream, pid} | &1])}
-
-          {:error, _} = error ->
-            {:reply, error, state}
-        end
     end
   end
 
