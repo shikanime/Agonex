@@ -3,41 +3,79 @@ defmodule Agonex do
   A SDK client for Agones.
   """
 
-  use Connection
-  require Logger
-  alias Agonex.{Duration, Empty, KeyValue, SDK, Watcher}
-
-  @type conn :: atom | pid | {atom, any} | {:via, atom, any}
   @type duration :: non_neg_integer
 
-  def start_link(url, opts \\ []),
-    do: Connection.start_link(__MODULE__, {url, opts})
+  def start_link(url, opts \\ []) do
+    name = Keyword.get(opts, :name, Agonex)
 
-  @spec allocate(conn) :: :ok
+    task_sup_name = Module.concat(name, "TaskSupervisor")
+    sup_name = Module.concat(name, "Supervisor")
+
+    children = [
+      {Task.Supervisor, name: task_sup_name},
+      {Agonex.Client, [url, task_sup_name, opts]}
+    ]
+
+    Supervisor.start_link(children, strategy: :rest_for_one, name: sup_name)
+  end
+
+  @spec allocate(module) :: :ok
+  def allocate(module),
+    do: Agonex.Client.allocate(module)
+
+  @spec shutdown(module) :: :ok
+  def shutdown(module),
+    do: Agonex.Client.shutdown(module)
+
+  @spec reserve(module, duration) :: :ok
+  def reserve(module, seconds),
+    do: Agonex.Client.reserve(module, seconds)
+
+  @spec get_game_server(module) :: {:ok, Agonex.GameServer.t()}
+  def get_game_server(module),
+    do: Agonex.Client.get_game_server(module)
+
+  @spec watch_game_server(module) :: :ok | {:error, GRPC.RPCError.t()}
+  def watch_game_server(module),
+    do: Agonex.Client.watch_game_server(module)
+
+  @spec set_label(module, String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
+  def set_label(module, key, value),
+    do: Agonex.Client.set_label(module, key, value)
+
+  @spec set_annotation(module, String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
+  def set_annotation(module, key, value),
+    do: Agonex.Client.set_annotation(module, key, value)
+end
+
+defmodule Agonex.Client do
+  @moduledoc false
+
+  use Connection
+  require Logger
+  alias Agonex.{Duration, Empty, KeyValue, SDK}
+
+  def start_link(url, task_sup, opts \\ []),
+    do: Connection.start_link(__MODULE__, {url, task_sup, opts})
+
   def allocate(conn),
     do: Connection.cast(conn, :allocate)
 
-  @spec shutdown(conn) :: :ok
   def shutdown(conn),
     do: Connection.cast(conn, :shutdown)
 
-  @spec reserve(conn, duration) :: :ok
   def reserve(conn, seconds),
     do: Connection.call(conn, {:reserve, seconds})
 
-  @spec get_game_server(conn) :: {:ok, Agonex.GameServer.t()}
   def get_game_server(conn),
     do: Connection.call(conn, :game_server)
 
-  @spec watch_game_server(conn) :: :ok | {:error, GRPC.RPCError.t()}
   def watch_game_server(conn),
-    do: Connection.call(conn, :watch_game_server)
+    do: Connection.call(conn, {:watch_game_server, self()})
 
-  @spec set_label(conn, String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
   def set_label(conn, key, value),
     do: Connection.call(conn, {:set_label, key, value})
 
-  @spec set_annotation(conn, String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
   def set_annotation(conn, key, value),
     do: Connection.call(conn, {:set_annotation, key, value})
 
@@ -53,15 +91,13 @@ defmodule Agonex do
       grpc_opts: grpc_opts
     }
 
-    Process.flag(:trap_exit, true)
-
     {:connect, :init, state}
   end
 
   def connect(_, state) do
     with {:ok, channel} <- GRPC.Stub.connect(state.url, state.grpc_opts),
          {:ok, health_stream} <- SDK.Stub.health(channel),
-         {:ok, _}<- SDK.Stub.ready(state.channel, Empty.new()) do
+         {:ok, _} <- SDK.Stub.ready(state.channel, Empty.new()) do
       state = %{
         state
         | channel: channel,
@@ -147,13 +183,20 @@ defmodule Agonex do
     end
   end
 
-  def handle_call(:watch_game_server, {pid, _}, state) do
-    case Watcher.start_link(state.channel, pid) do
-      {:ok, _} ->
-        {:reply, :ok, state}
+  def handle_call({:watch_game_server, sub_pid}, _, state) do
+    case SDK.Stub.watch_game_server(state.channel, Empty.new()) do
+      {:error, %GRPC.RPCError{}} = error ->
+        {:stop, error, state}
 
-      {:error, _} = error ->
-        {:reply, error, state}
+      stream ->
+        Task.Supervisor.start_child(
+          state.task_sup,
+          Agonex.Watcher,
+          :loop,
+          [{stream, sub_pid}]
+        )
+
+        {:noreply, state}
     end
   end
 
@@ -174,6 +217,17 @@ defmodule Agonex do
 
       {:error, %GRPC.RPCError{}} = error ->
         {:reply, error, state}
+    end
+  end
+end
+
+defmodule Agonex.Watcher do
+  @moduledoc false
+
+  def loop({stream, sub_pid}) do
+    with {:ok, game_server} <- GRPC.Stub.recv(stream) do
+      send(sub_pid, {:game_server_change, game_server})
+      loop({stream, sub_pid})
     end
   end
 end
