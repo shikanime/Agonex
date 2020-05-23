@@ -13,17 +13,19 @@ defmodule Agonex.MixProject do
 
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      mod: {Agonex.Application, []}
     ]
   end
 
   defp deps do
     [
+      {:nimble_options, "~> 0.2"},
+      {:grpc, "~> 0.5.0-beta.1"},
+      {:connection, "~> 1.0"},
       {:ex_doc, "~> 0.22.1", only: :dev, runtime: false},
       {:dialyxir, "~> 1.0", only: :dev, runtime: false},
-      {:credo, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:grpc, "~> 0.5.0-beta.1"},
-      {:connection, "~> 1.0"}
+      {:credo, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 end
