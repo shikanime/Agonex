@@ -21,7 +21,7 @@ defmodule Agonex do
   def reserve(seconds),
     do: Agonex.Client.reserve(seconds)
 
-  @spec get_game_server :: {:ok, Agones.GameServer.t()}
+  @spec get_game_server :: {:ok, Agones.Dev.Sdk.GameServer.t()}
   def get_game_server,
     do: Agonex.Client.get_game_server()
 

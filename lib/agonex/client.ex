@@ -3,7 +3,7 @@ defmodule Agonex.Client do
 
   use Connection
   require Logger
-  alias Agones.{Duration, Empty, KeyValue, SDK}
+  alias Agones.Dev.Sdk.{Duration, Empty, KeyValue, SDK.Stub}
 
   def start_link(options) do
     Connection.start_link(__MODULE__, options, name: __MODULE__)
@@ -62,7 +62,7 @@ defmodule Agonex.Client do
   def connect(_, state) do
     case GRPC.Stub.connect(state.host, state.port, state.grpc_opts) do
       {:ok, channel} ->
-        health_stream = SDK.Stub.health(channel)
+        health_stream = Stub.health(channel)
 
         state = %{
           state
@@ -106,7 +106,7 @@ defmodule Agonex.Client do
   end
 
   def handle_cast(:ready, state) do
-    case SDK.Stub.ready(state.channel, Empty.new()) do
+    case Stub.ready(state.channel, Empty.new()) do
       {:ok, _} ->
         {:noreply, state}
 
@@ -116,7 +116,7 @@ defmodule Agonex.Client do
   end
 
   def handle_cast(:allocate, state) do
-    case SDK.Stub.allocate(state.channel, Empty.new()) do
+    case Stub.allocate(state.channel, Empty.new()) do
       {:ok, _} ->
         {:noreply, state}
 
@@ -126,7 +126,7 @@ defmodule Agonex.Client do
   end
 
   def handle_cast(:shutdown, state) do
-    case SDK.Stub.shutdown(state.channel, Empty.new()) do
+    case Stub.shutdown(state.channel, Empty.new()) do
       {:ok, _} ->
         {:noreply, state}
 
@@ -136,7 +136,7 @@ defmodule Agonex.Client do
   end
 
   def handle_cast({:reserve, seconds}, state) do
-    case SDK.Stub.reserve(state.channel, Duration.new(seconds: seconds)) do
+    case Stub.reserve(state.channel, Duration.new(seconds: seconds)) do
       {:ok, _} ->
         {:reply, :ok, state}
 
@@ -150,7 +150,7 @@ defmodule Agonex.Client do
   end
 
   def handle_call(:game_server, _, state) do
-    case SDK.Stub.get_game_server(state.channel, Empty.new()) do
+    case Stub.get_game_server(state.channel, Empty.new()) do
       {:ok, game_server} ->
         {:reply, {:ok, game_server}, state}
 
@@ -160,7 +160,7 @@ defmodule Agonex.Client do
   end
 
   def handle_call({:watch_game_server, sub_pid}, _, state) do
-    case SDK.Stub.watch_game_server(state.channel, Empty.new()) do
+    case Stub.watch_game_server(state.channel, Empty.new()) do
       {:error, %GRPC.RPCError{}} = error ->
         {:stop, error, state}
 
@@ -177,7 +177,7 @@ defmodule Agonex.Client do
   end
 
   def handle_call({:set_label, key, value}, _, state) do
-    case SDK.Stub.set_label(state.channel, KeyValue.new(key: key, value: value)) do
+    case Stub.set_label(state.channel, KeyValue.new(key: key, value: value)) do
       {:ok, _} ->
         {:reply, :ok, state}
 
@@ -187,7 +187,7 @@ defmodule Agonex.Client do
   end
 
   def handle_call({:set_annotation, key, value}, _, state) do
-    case SDK.Stub.set_annotation(state.channel, KeyValue.new(key: key, value: value)) do
+    case Stub.set_annotation(state.channel, KeyValue.new(key: key, value: value)) do
       {:ok, _} ->
         {:reply, :ok, state}
 

@@ -14,7 +14,7 @@
 
 syntax = "proto3";
 
-package agones;
+package agones.dev.sdk;
 option go_package = "sdk";
 
 import "google/api/annotations.proto";
@@ -143,9 +143,20 @@ message GameServer {
             string name = 1;
             int32 port = 2;
         }
+        // [Stage:Alpha]
+        // [FeatureFlag:PlayerTracking]
+        message PlayerStatus {
+            int64 count = 1;
+            int64 capacity = 2;
+            repeated string ids = 3;
+        }
 
         string state = 1;
         string address = 2;
         repeated Port ports = 3;
+
+        // [Stage:Alpha]
+        // [FeatureFlag:PlayerTracking]
+        PlayerStatus players = 4;
     }
 }
