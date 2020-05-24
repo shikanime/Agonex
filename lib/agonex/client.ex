@@ -43,11 +43,13 @@ defmodule Agonex.Client do
       health_interval: health_interval
     }
 
-    {:ok, state, {:continue, {:connect,  port, grpc_opts}}}
+    {:ok, state, {:continue, {:connect, port, grpc_opts}}}
   end
 
-  def handle_continue({:connect,  port, opts}, state) do
-    case GRPC.Stub.connect("localhost", port, opts) do
+  def handle_continue({:connect, port, opts}, state) do
+    stub_opts = Keyword.merge(opts, adapter_opts: %{http2_opts: %{keepalive: :infinity}})
+
+    case GRPC.Stub.connect("localhost", port, stub_opts) do
       {:ok, channel} ->
         health_stream = Stub.health(channel)
 
@@ -73,33 +75,6 @@ defmodule Agonex.Client do
     GRPC.Stub.send_request(state.health_stream, Empty.new())
     Process.send_after(self(), :health, state.health_interval)
     {:noreply, state}
-  end
-
-  def handle_info({:gun_data, _, _, _, _}, state) do
-    {:noreply, state}
-  end
-
-  def handle_call({:watch_game_server, pid}, _, state) do
-    case Stub.watch_game_server(state.channel, Empty.new())  do
-      {:ok, stream} ->
-        Task.Supervisor.async(
-          Agonex.TaskSupervisor,
-          fn ->
-            Enum.each(stream, fn
-              {:ok, game_server} ->
-                send(pid, {:game_server_change, game_server})
-
-              {:error, _} ->
-                :ok
-            end)
-          end
-        )
-
-        {:reply, :ok, state}
-
-      {:error, _} = error ->
-        {:stop, error, state}
-    end
   end
 
   def handle_call(_, _, %{channel: nil} = state) do
@@ -156,6 +131,17 @@ defmodule Agonex.Client do
     end
   end
 
+  def handle_call({:watch_game_server, pid}, _, state) do
+    Task.Supervisor.async(
+      Agonex.TaskSupervisor,
+      Agonex.Watcher,
+      :subscribe,
+      [state.channel, pid]
+    )
+
+    {:reply, :ok, state}
+  end
+
   def handle_call({:set_label, key, value}, _, state) do
     case Stub.set_label(state.channel, KeyValue.new(key: key, value: value)) do
       {:ok, _} ->
@@ -173,6 +159,29 @@ defmodule Agonex.Client do
 
       {:error, _} = error ->
         {:reply, error, state}
+    end
+  end
+end
+
+defmodule Agonex.Watcher do
+  alias Agones.Dev.Sdk.{Empty, SDK.Stub}
+
+  def subscribe(channel, pid) do
+    case Stub.watch_game_server(channel, Empty.new()) do
+      {:ok, stream} ->
+        Enum.each(stream, fn
+          {:ok, game_server} ->
+            send(pid, {:game_server_change, game_server})
+
+          :ok ->
+            subscribe(channel, pid)
+
+          {:error, %GRPC.RPCError{status: 13}} ->
+            subscribe(channel, pid)
+        end)
+
+      {:error, %GRPC.RPCError{status: 13}} ->
+        subscribe(channel, pid)
     end
   end
 end
