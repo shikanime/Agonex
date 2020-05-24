@@ -25,7 +25,7 @@ defmodule Agonex.Client do
     do: GenServer.call(__MODULE__, :game_server)
 
   def watch_game_server,
-    do: GenServer.call(__MODULE__, {:watch_game_server, self()})
+    do: GenServer.cast(__MODULE__, {:watch_game_server, self()})
 
   def set_label(key, value),
     do: GenServer.call(__MODULE__, {:set_label, key, value})
@@ -85,6 +85,33 @@ defmodule Agonex.Client do
     {:noreply, state}
   end
 
+  def handle_info({:gun_data, _, _, _, _}, state) do
+    {:noreply, state}
+  end
+
+  def handle_cast({:watch_game_server, pid}, state) do
+    case Stub.watch_game_server(state.channel, Empty.new()) do
+      {:ok, stream} ->
+        Task.Supervisor.async(
+          Agonex.TaskSupervisor,
+          fn ->
+            Enum.each(stream, fn
+              {:ok, game_server} ->
+                send(pid, {:game_server_change, game_server})
+
+              {:error, _} ->
+                :ok
+            end)
+          end
+        )
+
+        {:reply, :ok, state}
+
+      {:error, _} = error ->
+        {:stop, error, state}
+    end
+  end
+
   def handle_call(_, _, %{channel: nil} = state) do
     {:reply, {:error, :closed}, state}
   end
@@ -139,23 +166,6 @@ defmodule Agonex.Client do
     end
   end
 
-  def handle_call({:watch_game_server, sub_pid}, _, state) do
-    case Stub.watch_game_server(state.channel, Empty.new()) do
-      {:error, _} = error ->
-        {:stop, error, state}
-
-      stream ->
-        Task.Supervisor.start_child(
-          Agonex.TaskSupervisor,
-          Agonex.Watcher,
-          :loop,
-          [{stream, sub_pid}]
-        )
-
-        {:noreply, state}
-    end
-  end
-
   def handle_call({:set_label, key, value}, _, state) do
     case Stub.set_label(state.channel, KeyValue.new(key: key, value: value)) do
       {:ok, _} ->
@@ -173,17 +183,6 @@ defmodule Agonex.Client do
 
       {:error, _} = error ->
         {:reply, error, state}
-    end
-  end
-end
-
-defmodule Agonex.Watcher do
-  @moduledoc false
-
-  def loop({stream, sub_pid}) do
-    with {:ok, game_server} <- GRPC.Stub.recv(stream) do
-      send(sub_pid, {:game_server_change, game_server})
-      loop({stream, sub_pid})
     end
   end
 end
