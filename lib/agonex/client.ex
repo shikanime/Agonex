@@ -1,37 +1,37 @@
 defmodule Agonex.Client do
   @moduledoc false
 
-  use Connection
+  use GenServer
   require Logger
   alias Agones.Dev.Sdk.{Duration, Empty, KeyValue, SDK.Stub}
 
   def start_link(options) do
-    Connection.start_link(__MODULE__, options, name: __MODULE__)
+    GenServer.start_link(__MODULE__, options, name: __MODULE__)
   end
 
   def allocate,
-    do: Connection.cast(__MODULE__, :allocate)
+    do: GenServer.call(__MODULE__, :allocate)
 
   def ready,
-    do: Connection.cast(__MODULE__, :ready)
+    do: GenServer.call(__MODULE__, :ready)
 
   def shutdown,
-    do: Connection.cast(__MODULE__, :shutdown)
+    do: GenServer.call(__MODULE__, :shutdown)
 
   def reserve(seconds),
-    do: Connection.cast(__MODULE__, {:reserve, seconds})
+    do: GenServer.call(__MODULE__, {:reserve, seconds})
 
   def get_game_server,
-    do: Connection.call(__MODULE__, :game_server)
+    do: GenServer.call(__MODULE__, :game_server)
 
   def watch_game_server,
-    do: Connection.call(__MODULE__, {:watch_game_server, self()})
+    do: GenServer.call(__MODULE__, {:watch_game_server, self()})
 
   def set_label(key, value),
-    do: Connection.call(__MODULE__, {:set_label, key, value})
+    do: GenServer.call(__MODULE__, {:set_label, key, value})
 
   def set_annotation(key, value),
-    do: Connection.call(__MODULE__, {:set_annotation, key, value})
+    do: GenServer.call(__MODULE__, {:set_annotation, key, value})
 
   def child_spec(opts) do
     %{
@@ -48,19 +48,16 @@ defmodule Agonex.Client do
     grpc_opts = Keyword.fetch!(options, :grpc_opts)
 
     state = %{
-      host: host,
-      port: port,
       channel: nil,
       health_stream: nil,
-      health_interval: health_interval,
-      grpc_opts: grpc_opts
+      health_interval: health_interval
     }
 
-    {:connect, :init, state}
+    {:ok, state, {:continue, {:connect, host, port, grpc_opts}}}
   end
 
-  def connect(_, state) do
-    case GRPC.Stub.connect(state.host, state.port, state.grpc_opts) do
+  def handle_continue({:connect, host, port, opts}, state) do
+    case GRPC.Stub.connect(host, port, opts) do
       {:ok, channel} ->
         health_stream = Stub.health(channel)
 
@@ -72,31 +69,14 @@ defmodule Agonex.Client do
 
         send(self(), :health)
 
-        {:ok, state}
+        {:noreply, state}
 
-      {:error, _} ->
-        {:backoff, 1000, state}
+      {:error, "Error when opening connection: protocol " <> proto} ->
+        {:stop, {:error, {:protocol_mismatch, proto |> String.to_existing_atom()}}, state}
+
+      {:error, "Error when opening connection: :" <> reason} ->
+        {:stop, {:error, reason |> String.to_existing_atom()}, state}
     end
-  end
-
-  def disconnect(reason, state) do
-    case reason do
-      {:error, :closed} ->
-        Logger.error("Connection closed")
-
-      _ ->
-        :ok
-    end
-
-    GRPC.Stub.disconnect(state.channel)
-
-    state = %{
-      state
-      | channel: nil,
-        health_stream: nil
-    }
-
-    {:connect, :reconnect, state}
   end
 
   def handle_info(:health, state) do
@@ -105,48 +85,48 @@ defmodule Agonex.Client do
     {:noreply, state}
   end
 
-  def handle_cast(:ready, state) do
+  def handle_call(_, _, %{channel: nil} = state) do
+    {:reply, {:error, :closed}, state}
+  end
+
+  def handle_call(:ready, _, state) do
     case Stub.ready(state.channel, Empty.new()) do
-      {:ok, _} ->
-        {:noreply, state}
-
-      {:error, %GRPC.RPCError{}} = error ->
-        {:disconnect, error, error, state}
-    end
-  end
-
-  def handle_cast(:allocate, state) do
-    case Stub.allocate(state.channel, Empty.new()) do
-      {:ok, _} ->
-        {:noreply, state}
-
-      {:error, %GRPC.RPCError{}} = error ->
-        {:disconnect, error, error, state}
-    end
-  end
-
-  def handle_cast(:shutdown, state) do
-    case Stub.shutdown(state.channel, Empty.new()) do
-      {:ok, _} ->
-        {:noreply, state}
-
-      {:error, %GRPC.RPCError{}} = error ->
-        {:disconnect, error, error, state}
-    end
-  end
-
-  def handle_cast({:reserve, seconds}, state) do
-    case Stub.reserve(state.channel, Duration.new(seconds: seconds)) do
       {:ok, _} ->
         {:reply, :ok, state}
 
-      {:error, %GRPC.RPCError{}} = error ->
+      {:error, _} = error ->
         {:reply, error, state}
     end
   end
 
-  def handle_call(_, _, %{channel: nil} = state) do
-    {:reply, {:error, :closed}, state}
+  def handle_call(:allocate, _, state) do
+    case Stub.allocate(state.channel, Empty.new()) do
+      {:ok, _} ->
+        {:reply, :ok, state}
+
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
+  end
+
+  def handle_call(:shutdown, _, state) do
+    case Stub.shutdown(state.channel, Empty.new()) do
+      {:ok, _} ->
+        {:reply, :ok, state}
+
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
+  end
+
+  def handle_call({:reserve, seconds}, _, state) do
+    case Stub.reserve(state.channel, Duration.new(seconds: seconds)) do
+      {:ok, _} ->
+        {:reply, :ok, state}
+
+      {:error, _} = error ->
+        {:reply, error, state}
+    end
   end
 
   def handle_call(:game_server, _, state) do
@@ -154,14 +134,14 @@ defmodule Agonex.Client do
       {:ok, game_server} ->
         {:reply, {:ok, game_server}, state}
 
-      {:error, %GRPC.RPCError{}} = error ->
+      {:error, _} = error ->
         {:reply, error, state}
     end
   end
 
   def handle_call({:watch_game_server, sub_pid}, _, state) do
     case Stub.watch_game_server(state.channel, Empty.new()) do
-      {:error, %GRPC.RPCError{}} = error ->
+      {:error, _} = error ->
         {:stop, error, state}
 
       stream ->
@@ -181,7 +161,7 @@ defmodule Agonex.Client do
       {:ok, _} ->
         {:reply, :ok, state}
 
-      {:error, %GRPC.RPCError{}} = error ->
+      {:error, _} = error ->
         {:reply, error, state}
     end
   end
@@ -191,7 +171,7 @@ defmodule Agonex.Client do
       {:ok, _} ->
         {:reply, :ok, state}
 
-      {:error, %GRPC.RPCError{}} = error ->
+      {:error, _} = error ->
         {:reply, error, state}
     end
   end
