@@ -5,9 +5,8 @@ defmodule Agonex.Client do
   require Logger
   alias Agones.Dev.Sdk.{Duration, Empty, KeyValue, SDK.Stub}
 
-  def start_link(options) do
-    GenServer.start_link(__MODULE__, options, name: __MODULE__)
-  end
+  def start_link(options),
+    do: GenServer.start_link(__MODULE__, options, name: __MODULE__)
 
   def allocate,
     do: GenServer.call(__MODULE__, :allocate)
@@ -25,7 +24,7 @@ defmodule Agonex.Client do
     do: GenServer.call(__MODULE__, :game_server)
 
   def watch_game_server,
-    do: GenServer.cast(__MODULE__, {:watch_game_server, self()})
+    do: GenServer.call(__MODULE__, {:watch_game_server, self()})
 
   def set_label(key, value),
     do: GenServer.call(__MODULE__, {:set_label, key, value})
@@ -33,19 +32,10 @@ defmodule Agonex.Client do
   def set_annotation(key, value),
     do: GenServer.call(__MODULE__, {:set_annotation, key, value})
 
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker
-    }
-  end
-
   def init(options) do
-    host = Keyword.fetch!(options, :host)
-    port = Keyword.fetch!(options, :port)
+    port = System.get_env("AGONES_SDK_GRPC_PORT", "9357") |> String.to_integer()
     health_interval = Keyword.fetch!(options, :health_interval)
-    grpc_opts = Keyword.fetch!(options, :grpc_opts)
+    grpc_opts = Keyword.fetch!(options, :grpc_options)
 
     state = %{
       channel: nil,
@@ -53,11 +43,11 @@ defmodule Agonex.Client do
       health_interval: health_interval
     }
 
-    {:ok, state, {:continue, {:connect, host, port, grpc_opts}}}
+    {:ok, state, {:continue, {:connect,  port, grpc_opts}}}
   end
 
-  def handle_continue({:connect, host, port, opts}, state) do
-    case GRPC.Stub.connect(host, port, opts) do
+  def handle_continue({:connect,  port, opts}, state) do
+    case GRPC.Stub.connect("localhost", port, opts) do
       {:ok, channel} ->
         health_stream = Stub.health(channel)
 
@@ -89,8 +79,8 @@ defmodule Agonex.Client do
     {:noreply, state}
   end
 
-  def handle_cast({:watch_game_server, pid}, state) do
-    case Stub.watch_game_server(state.channel, Empty.new()) do
+  def handle_call({:watch_game_server, pid}, _, state) do
+    case Stub.watch_game_server(state.channel, Empty.new())  do
       {:ok, stream} ->
         Task.Supervisor.async(
           Agonex.TaskSupervisor,
