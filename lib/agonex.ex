@@ -18,7 +18,7 @@ defmodule Agonex do
     do: Agonex.Client.shutdown()
 
   @spec reserve(duration) :: :ok
-  def reserve(seconds),
+  def reserve(seconds) when is_integer(seconds),
     do: Agonex.Client.reserve(seconds)
 
   @spec get_game_server :: {:ok, Agones.Dev.Sdk.GameServer.t()}
@@ -30,10 +30,10 @@ defmodule Agonex do
     do: Agonex.Client.watch_game_server()
 
   @spec set_label(String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
-  def set_label(key, value),
+  def set_label(key, value) when is_binary(key) and is_binary(value),
     do: Agonex.Client.set_label(key, value)
 
   @spec set_annotation(String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
-  def set_annotation(key, value),
+  def set_annotation(key, value) when is_binary(key) and is_binary(value),
     do: Agonex.Client.set_annotation(key, value)
 end
