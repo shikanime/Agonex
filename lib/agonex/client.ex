@@ -112,7 +112,7 @@ defmodule Agonex.Client do
   end
 
   def handle_call({:reserve, seconds}, _, state) do
-    case Stub.reserve(state.channel, Duration.new(seconds: seconds)) do
+    case Stub.reserve(state.channel, seconds_to_duration(seconds)) do
       {:ok, _} ->
         {:reply, :ok, state}
 
@@ -161,6 +161,12 @@ defmodule Agonex.Client do
         {:reply, error, state}
     end
   end
+
+  defp seconds_to_duration(:infinity),
+    do: Duration.new(seconds: 0)
+
+  defp seconds_to_duration(seconds),
+    do: Duration.new(seconds: seconds)
 end
 
 defmodule Agonex.Watcher do

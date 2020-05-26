@@ -17,7 +17,7 @@ defmodule Agonex do
   the desired state in a callback to watch_game_server() function.
   """
 
-  @type duration :: non_neg_integer
+  @type duration :: pos_integer | :infinity
 
   @doc """
   With some matchmakers and game matching strategies, it can be important for
@@ -61,7 +61,7 @@ defmodule Agonex do
   FleetAutoscaler scale up. This is where reserve(seconds) is useful.
 
   reserve(seconds) will move the GameServer into the Reserved state for the
-  specified number of seconds (0 is forever), and then it will be moved back to
+  specified number of seconds, and then it will be moved back to
   Ready state. While in Reserved state, the GameServer will not be deleted on
   scale down or Fleet update, and also it could not be Allocated using
   GameServerAllocation.
