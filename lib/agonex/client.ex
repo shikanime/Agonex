@@ -164,6 +164,7 @@ defmodule Agonex.Client do
 end
 
 defmodule Agonex.Watcher do
+  @moduledoc false
   alias Agones.Dev.Sdk.{Empty, SDK.Stub}
 
   def subscribe(channel, pid) do
