@@ -1,7 +1,7 @@
 defmodule Agonex.Client do
   @moduledoc false
 
-  @default_health_interval 50000
+  @default_health_interval 5000
 
   use GenServer
   require Logger
