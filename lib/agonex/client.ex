@@ -12,29 +12,29 @@ defmodule Agonex.Client do
     GenServer.start_link(__MODULE__, opts, sup_opts)
   end
 
-  def allocate,
-    do: GenServer.call(__MODULE__, :allocate)
+  def allocate(client),
+    do: GenServer.call(client, :allocate)
 
-  def ready,
-    do: GenServer.call(__MODULE__, :ready)
+  def ready(client),
+    do: GenServer.call(client, :ready)
 
-  def shutdown,
-    do: GenServer.call(__MODULE__, :shutdown)
+  def shutdown(client),
+    do: GenServer.call(client, :shutdown)
 
-  def reserve(seconds),
-    do: GenServer.call(__MODULE__, {:reserve, seconds})
+  def reserve(client, seconds),
+    do: GenServer.call(client, {:reserve, seconds})
 
-  def get_game_server,
-    do: GenServer.call(__MODULE__, :game_server)
+  def get_game_server(client),
+    do: GenServer.call(client, :game_server)
 
-  def watch_game_server,
-    do: GenServer.call(__MODULE__, {:watch_game_server, self()})
+  def watch_game_server(client),
+    do: GenServer.call(client, {:watch_game_server, self()})
 
-  def set_label(key, value),
-    do: GenServer.call(__MODULE__, {:set_label, key, value})
+  def set_label(client, key, value),
+    do: GenServer.call(client, {:set_label, key, value})
 
-  def set_annotation(key, value),
-    do: GenServer.call(__MODULE__, {:set_annotation, key, value})
+  def set_annotation(client, key, value),
+    do: GenServer.call(client, {:set_annotation, key, value})
 
   def init(options) do
     unless watcher_sup = Keyword.fetch!(options, :watcher_supervisor) do

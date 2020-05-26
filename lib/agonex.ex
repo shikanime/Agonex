@@ -28,8 +28,8 @@ defmodule Agonex do
   this call. Please refer to the general note in Function Reference above.
   """
   @spec allocate :: :ok
-  def allocate,
-    do: Agonex.Client.allocate()
+  def allocate(client \\ Agonex.Client),
+    do: Agonex.Client.allocate(client)
 
   @doc """
   This tells Agones that the Game Server is ready to take player connections.
@@ -43,8 +43,8 @@ defmodule Agonex do
   do this.
   """
   @spec ready :: :ok
-  def ready,
-    do: Agonex.Client.ready()
+  def ready(client \\ Agonex.Client),
+    do: Agonex.Client.ready(client)
 
   @doc """
   This tells Agones to shut down the currently running game server. The
@@ -52,8 +52,8 @@ defmodule Agonex do
   they have not shut themselves down already.
   """
   @spec shutdown :: :ok
-  def shutdown,
-    do: Agonex.Client.shutdown()
+  def shutdown(client \\ Agonex.Client),
+    do: Agonex.Client.shutdown(client)
 
   @doc """
   With some matchmaking scenarios and systems it is important to be able to
@@ -77,8 +77,8 @@ defmodule Agonex do
   to an Allocated state accordingly.
   """
   @spec reserve(duration) :: :ok
-  def reserve(seconds) when is_integer(seconds),
-    do: Agonex.Client.reserve(seconds)
+  def reserve(client \\ Agonex.Client, seconds) when is_integer(seconds),
+    do: Agonex.Client.reserve(client, seconds)
 
   @doc """
   This returns most of the backing GameServer configuration and Status. This can
@@ -89,8 +89,8 @@ defmodule Agonex do
   specifically at the message GameServer.
   """
   @spec get_game_server :: {:ok, Agones.Dev.Sdk.GameServer.t()}
-  def get_game_server,
-    do: Agonex.Client.get_game_server()
+  def get_game_server(client \\ Agonex.Client),
+    do: Agonex.Client.get_game_server(client)
 
   @doc """
   This executes the passed in callback with the current GameServer details
@@ -107,8 +107,8 @@ defmodule Agonex do
   specifically at the message GameServer.
 """
   @spec watch_game_server :: :ok | {:error, GRPC.RPCError.t()}
-  def watch_game_server,
-    do: Agonex.Client.watch_game_server()
+  def watch_game_server(client \\ Agonex.Client),
+    do: Agonex.Client.watch_game_server(client)
 
   @doc """
   This will set a Label value on the backing GameServer record that is stored in
@@ -119,8 +119,8 @@ defmodule Agonex do
   process to be observable or searchable through the Kubernetes API.
   """
   @spec set_label(String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
-  def set_label(key, value) when is_binary(key) and is_binary(value),
-    do: Agonex.Client.set_label(key, value)
+  def set_label(client \\ Agonex.Client, key, value) when is_binary(key) and is_binary(value),
+    do: Agonex.Client.set_label(client, key, value)
 
   @doc """
   This will set a Annotation value on the backing Gameserver record that is
@@ -131,6 +131,6 @@ defmodule Agonex do
   process to be observable through the Kubernetes API.
 """
   @spec set_annotation(String.t(), String.t()) :: :ok | {:error, GRPC.RPCError.t()}
-  def set_annotation(key, value) when is_binary(key) and is_binary(value),
-    do: Agonex.Client.set_annotation(key, value)
+  def set_annotation(client \\ Agonex.Client, key, value) when is_binary(key) and is_binary(value),
+    do: Agonex.Client.set_annotation(client, key, value)
 end
