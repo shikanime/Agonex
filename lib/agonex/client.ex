@@ -1,12 +1,16 @@
 defmodule Agonex.Client do
   @moduledoc false
 
+  @default_health_interval 50000
+
   use GenServer
   require Logger
   alias Agones.Dev.Sdk.{Duration, Empty, KeyValue, SDK.Stub}
 
-  def start_link(options),
-    do: GenServer.start_link(__MODULE__, options, name: __MODULE__)
+  def start_link(options) do
+    {sup_opts, opts} = Keyword.split(options, [:name])
+    GenServer.start_link(__MODULE__, opts, sup_opts)
+  end
 
   def allocate,
     do: GenServer.call(__MODULE__, :allocate)
@@ -33,11 +37,17 @@ defmodule Agonex.Client do
     do: GenServer.call(__MODULE__, {:set_annotation, key, value})
 
   def init(options) do
+    unless watcher_sup = Keyword.fetch!(options, :watcher_supervisor) do
+      raise ArgumentError, "expected :watcher_supervisor option to be given"
+    end
+
     port = System.get_env("AGONES_SDK_GRPC_PORT", "9357") |> String.to_integer()
-    health_interval = Keyword.fetch!(options, :health_interval)
-    grpc_opts = Keyword.fetch!(options, :grpc_options)
+
+    health_interval = Keyword.get(options, :health_interval, @default_health_interval)
+    grpc_opts = Keyword.get(options, :grpc_options, [])
 
     state = %{
+      watcher_sup: watcher_sup,
       channel: nil,
       health_stream: nil,
       health_interval: health_interval
@@ -131,14 +141,8 @@ defmodule Agonex.Client do
     end
   end
 
-  def handle_call({:watch_game_server, pid}, _, state) do
-    Task.Supervisor.async(
-      Agonex.TaskSupervisor,
-      Agonex.Watcher,
-      :subscribe,
-      [state.channel, pid]
-    )
-
+  def handle_call({:watch_game_server, consumer}, _, state) do
+    DynamicSupervisor.start_child(state.watcher_sup, {Agonex.Watcher, [consumer, state.channel]})
     {:reply, :ok, state}
   end
 
@@ -171,24 +175,32 @@ end
 
 defmodule Agonex.Watcher do
   @moduledoc false
+  use GenServer
   alias Agones.Dev.Sdk.{Empty, SDK.Stub}
 
-  def subscribe(channel, pid) do
-    case Stub.watch_game_server(channel, Empty.new()) do
+  def start_link(consumer, channel, opts \\ []),
+    do: GenServer.start_link(__MODULE__, {consumer, channel}, opts)
+
+  def init({consumer, channel}) do
+    send(self(), :recv)
+    {:ok, %{channel: channel, consumer: consumer}}
+  end
+
+  def handle_info(:recv, state) do
+    case Stub.watch_game_server(state.channel, Empty.new()) do
       {:ok, stream} ->
         Enum.each(stream, fn
           {:ok, game_server} ->
-            send(pid, {:game_server_change, game_server})
+            send(state.consumer, {:game_server_change, game_server})
+            send(self(), :recv)
+            {:noreply, state}
 
-          :ok ->
-            subscribe(channel, pid)
-
-          {:error, %GRPC.RPCError{status: 13}} ->
-            subscribe(channel, pid)
+          {:error, _} ->
+            {:stop, {:error, :grpc_err}, state}
         end)
 
-      {:error, %GRPC.RPCError{status: 13}} ->
-        subscribe(channel, pid)
+      {:error, _} ->
+        {:stop, {:error, :grpc_err}, state}
     end
   end
 end

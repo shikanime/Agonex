@@ -7,12 +7,10 @@ defmodule Agonex.Application do
 
   @config_schema [
     health_interval: [
-      type: :pos_integer,
-      default: 5000
+      type: :pos_integer
     ],
     grpc_options: [
-      type: :keyword_list,
-      default: []
+      type: :keyword_list
     ]
   ]
 
@@ -21,10 +19,14 @@ defmodule Agonex.Application do
       Application.get_all_env(:agonex)
       |> NimbleOptions.validate!(@config_schema)
 
-    client_opts = Keyword.take(config, [:grpc_options, :health_interval])
+    client_opts =
+      config
+      |> Keyword.take([:grpc_options, :health_interval])
+      |> Keyword.put(:watcher_supervisor, Agonex.WatcherSupervisor)
+      |> Keyword.put(:name, Agonex.Client)
 
     children = [
-      {Task.Supervisor, name: Agonex.TaskSupervisor},
+      {DynamicSupervisor, strategy: :one_for_one, name: Agonex.WatcherSupervisor},
       {Agonex.Client, client_opts}
     ]
 
