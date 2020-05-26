@@ -142,7 +142,13 @@ defmodule Agonex.Client do
   end
 
   def handle_call({:watch_game_server, consumer}, _, state) do
-    DynamicSupervisor.start_child(state.watcher_sup, {Agonex.Watcher, [consumer, state.channel]})
+    child_spec = %{
+      id: Agonex.Watcher,
+      start: {Agonex.Watcher, :start_link, [consumer, state.channel]}
+    }
+
+    DynamicSupervisor.start_child(state.watcher_sup, child_spec)
+
     {:reply, :ok, state}
   end
 
