@@ -3,15 +3,17 @@ kind: Config
 metadata:
   name: hello-agones
 build:
+  local:
+    useBuildkit: true
   artifacts:
     - image: shikanime/hello-agones
       docker:
         dockerfile: examples/hello_agones/Dockerfile
       context: ../../
 deploy:
-  kubectl:
-    manifests:
-      - manifests/gameserver.yaml
+  kustomize:
+    paths:
+      - manifests
 portForward:
   - resourceType: pod
     resourceName: hello-agones

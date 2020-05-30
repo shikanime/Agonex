@@ -8,7 +8,15 @@ spec:
       containerPort: 7654
   template:
     spec:
+      shareProcessNamespace: true
       containers:
         - name: hello-agones
           image: shikanime/hello-agones
           imagePullPolicy: Never
+          resources:
+            requests:
+              memory: "250Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "2000m"

@@ -17,7 +17,6 @@ defmodule HelloAgones.MixProject do
     [
       hello_agones: [
         include_executables_for: [:unix],
-        include_erts: false,
         applications: [
           runtime_tools: :permanent,
           hello_agones: :permanent
